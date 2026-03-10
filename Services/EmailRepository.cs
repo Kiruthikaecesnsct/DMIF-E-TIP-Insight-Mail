@@ -9,6 +9,7 @@ namespace InsightMail.API.Services
         Task<Email?> GetByIdAsync(string id);
         Task<List<Email>> GetAllAsync();
         Task<bool> DeleteAsync(string id);
+        Task<List<Email>> SearchAsync(string query);
     }
 
     public class EmailRepository : IEmailRepository
@@ -43,6 +44,22 @@ namespace InsightMail.API.Services
         {
             var result = await _emails.DeleteOneAsync(e => e.Id == id);
             return result.DeletedCount > 0;
+        }
+
+        public async Task<List<Email>> SearchAsync(string query)
+        {
+            var filter = Builders<Email>.Filter.Or(
+                Builders<Email>.Filter.Regex(e => e.Subject,
+                    new MongoDB.Bson.BsonRegularExpression(query, "i")),
+                Builders<Email>.Filter.Regex(e => e.Body,
+                    new MongoDB.Bson.BsonRegularExpression(query, "i")),
+                Builders<Email>.Filter.Regex(e => e.Sender,
+                    new MongoDB.Bson.BsonRegularExpression(query, "i"))
+            );
+
+            return await _emails.Find(filter)
+                .SortByDescending(e => e.ReceivedDate)
+                .ToListAsync();
         }
     }
 }

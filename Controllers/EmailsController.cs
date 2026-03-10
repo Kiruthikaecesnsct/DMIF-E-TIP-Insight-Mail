@@ -199,31 +199,29 @@ namespace InsightMail.API.Controllers
             _repository = repository;
         }
 
+        /// <summary>
+        /// Uploads and parses a single .eml email file
+        /// </summary>
+        /// <param name="file">The .eml file to upload</param>
+        /// <returns>The parsed email object</returns>
         [HttpPost("upload")]
         public async Task<ActionResult<Email>> UploadEmail(IFormFile file)
         {
             if (file == null || file.Length == 0)
-            {
                 return BadRequest("No file uploaded");
-            }
 
             if (!file.FileName.EndsWith(".eml"))
-            {
                 return BadRequest("Only .eml files are supported");
-            }
 
             try
             {
                 using var stream = file.OpenReadStream();
                 var email = await _parser.ParseEmailAsync(stream);
 
-                // Save to MongoDB
                 await _repository.CreateAsync(email);
 
-                return CreatedAtAction(
-                    nameof(GetEmail),
-                    new { id = email.Id },
-                    email);
+                return CreatedAtAction(nameof(GetEmail),
+                    new { id = email.Id }, email);
             }
             catch (Exception ex)
             {
@@ -232,13 +230,16 @@ namespace InsightMail.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Upload multiple email files at once
+        /// </summary>
+        /// <param name="files">List of .eml files</param>
+        /// <returns>Upload summary with success and errors</returns>
         [HttpPost("upload/batch")]
         public async Task<ActionResult> UploadMultipleEmails(List<IFormFile> files)
         {
             if (files == null || !files.Any())
-            {
                 return BadRequest("No files uploaded");
-            }
 
             var uploadedEmails = new List<Email>();
             var errors = new List<string>();
@@ -257,7 +258,6 @@ namespace InsightMail.API.Controllers
                     var email = await _parser.ParseEmailAsync(stream);
 
                     await _repository.CreateAsync(email);
-
                     uploadedEmails.Add(email);
                 }
                 catch (Exception ex)
@@ -266,17 +266,19 @@ namespace InsightMail.API.Controllers
                 }
             }
 
-            var result = new
+            return Ok(new
             {
                 Uploaded = uploadedEmails.Count,
                 Failed = errors.Count,
                 Emails = uploadedEmails,
                 Errors = errors
-            };
-
-            return Ok(result);
+            });
         }
 
+        /// <summary>
+        /// Retrieves all emails from the database
+        /// </summary>
+        /// <returns>List of emails sorted by received date</returns>
         [HttpGet]
         public async Task<ActionResult<List<Email>>> GetEmails()
         {
@@ -284,6 +286,11 @@ namespace InsightMail.API.Controllers
             return Ok(emails);
         }
 
+        /// <summary>
+        /// Retrieves a single email by ID
+        /// </summary>
+        /// <param name="id">Email ID</param>
+        /// <returns>Email object</returns>
         [HttpGet("{id}")]
         public async Task<ActionResult<Email>> GetEmail(string id)
         {
@@ -295,6 +302,10 @@ namespace InsightMail.API.Controllers
             return Ok(email);
         }
 
+        /// <summary>
+        /// Deletes an email by ID
+        /// </summary>
+        /// <param name="id">Email ID</param>
         [HttpDelete("{id}")]
         public async Task<ActionResult> DeleteEmail(string id)
         {
@@ -304,6 +315,85 @@ namespace InsightMail.API.Controllers
                 return NotFound();
 
             return NoContent();
+        }
+
+        /// <summary>
+        /// Search emails by keyword
+        /// </summary>
+        /// <param name="query">Search text</param>
+        [HttpGet("search")]
+        public async Task<ActionResult<List<Email>>> SearchEmails([FromQuery] string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return BadRequest("Search query cannot be empty");
+
+            var emails = await _repository.SearchAsync(query);
+            return Ok(emails);
+        }
+
+        /// <summary>
+        /// Get emails sent by a specific sender
+        /// </summary>
+        /// <param name="sender">Sender email address</param>
+        [HttpGet("sender/{sender}")]
+        public async Task<ActionResult<List<Email>>> GetEmailsBySender(string sender)
+        {
+            var emails = await _repository.GetAllAsync();
+
+            var filtered = emails
+                .Where(e => e.Sender.Contains(sender,
+                StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            return Ok(filtered);
+        }
+
+        /// <summary>
+        /// Retrieve emails within a date range
+        /// </summary>
+        [HttpGet("date-range")]
+        public async Task<ActionResult<List<Email>>> GetEmailsByDateRange(
+            [FromQuery] DateTime start,
+            [FromQuery] DateTime end)
+        {
+            var emails = await _repository.GetAllAsync();
+
+            var filtered = emails
+                .Where(e => e.ReceivedDate >= start &&
+                            e.ReceivedDate <= end)
+                .ToList();
+
+            return Ok(filtered);
+        }
+
+        /// <summary>
+        /// Get email analytics and statistics
+        /// </summary>
+        [HttpGet("stats")]
+        public async Task<ActionResult> GetEmailStats()
+        {
+            var emails = await _repository.GetAllAsync();
+
+            var stats = new
+            {
+                TotalEmails = emails.Count,
+                UniqueSenders = emails.Select(e => e.Sender).Distinct().Count(),
+                OldestEmail = emails.MinBy(e => e.ReceivedDate)?.ReceivedDate,
+                NewestEmail = emails.MaxBy(e => e.ReceivedDate)?.ReceivedDate,
+                EmailsByMonth = emails
+                    .GroupBy(e => new { e.ReceivedDate.Year, e.ReceivedDate.Month })
+                    .Select(g => new
+                    {
+                        Year = g.Key.Year,
+                        Month = g.Key.Month,
+                        Count = g.Count()
+                    })
+                    .OrderByDescending(x => x.Year)
+                    .ThenByDescending(x => x.Month)
+                    .ToList()
+            };
+
+            return Ok(stats);
         }
     }
 }
