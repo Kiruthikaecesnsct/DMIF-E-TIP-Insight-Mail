@@ -1,0 +1,7 @@
+Summarize the following email in 2-3 sentences.
+
+Subject: {{subject}}
+Sender: {{sender}}
+
+Body:
+{{body}}

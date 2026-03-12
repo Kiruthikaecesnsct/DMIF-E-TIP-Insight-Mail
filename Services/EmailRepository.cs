@@ -10,6 +10,8 @@ namespace InsightMail.API.Services
         Task<List<Email>> GetAllAsync();
         Task<bool> DeleteAsync(string id);
         Task<List<Email>> SearchAsync(string query);
+
+        Task<bool> UpdateAsync(Email email);
     }
 
     public class EmailRepository : IEmailRepository
@@ -61,5 +63,15 @@ namespace InsightMail.API.Services
                 .SortByDescending(e => e.ReceivedDate)
                 .ToListAsync();
         }
+        public async Task<bool> UpdateAsync(Email email)
+        {
+            var result = await _emails.ReplaceOneAsync(
+                e => e.Id == email.Id,
+                email
+            );
+
+            return result.ModifiedCount > 0;
+        }
     }
+
 }

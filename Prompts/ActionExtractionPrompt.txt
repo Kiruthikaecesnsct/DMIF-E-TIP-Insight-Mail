@@ -1,0 +1,17 @@
+Extract any required actions from this email.
+
+Subject: {{subject}}
+From: {{sender}}
+
+Body:
+{{body}}
+
+Return JSON format:
+{
+  "actions": [
+    {
+      "task": "task description",
+      "deadline": "if mentioned"
+    }
+  ]
+}

@@ -36,7 +36,11 @@ namespace InsightMail.API.Models
         [StringLength(100)]
         public string? Category { get; set; }
 
-        [Range(1, 5, ErrorMessage = "Priority must be between 1 and 5")]
+        [Range(1, 10)]
         public int? Priority { get; set; }
+
+        public string? ClassificationReasoning { get; set; }
+        public double? ClassificationConfidence { get; set; }
+        public DateTime? ClassifiedDate { get; set; }
     }
 }

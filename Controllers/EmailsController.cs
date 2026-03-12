@@ -178,9 +178,9 @@
 
 
 //PART 3:USING EMAIL REPOSITORY
-using Microsoft.AspNetCore.Mvc;
-using InsightMail.API.Services;
 using InsightMail.API.Models;
+using InsightMail.API.Services;
+using Microsoft.AspNetCore.Mvc;
 
 namespace InsightMail.API.Controllers
 {
@@ -190,13 +190,16 @@ namespace InsightMail.API.Controllers
     {
         private readonly IEmailParserService _parser;
         private readonly IEmailRepository _repository;
+        private readonly IClassifierService _classifier;
 
         public EmailsController(
             IEmailParserService parser,
-            IEmailRepository repository)
+            IEmailRepository repository,
+            IClassifierService classifier)
         {
             _parser = parser;
             _repository = repository;
+            _classifier = classifier;
         }
 
         /// <summary>
@@ -219,6 +222,24 @@ namespace InsightMail.API.Controllers
                 var email = await _parser.ParseEmailAsync(stream);
 
                 await _repository.CreateAsync(email);
+
+                // Run AI classification in background
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await _classifier.ClassifyEmailAsync(email);
+
+                        email.Category = result.Category;
+                        email.Priority = result.Priority;
+                        email.ClassificationReasoning = result.Reasoning;
+                        email.ClassificationConfidence = result.Confidence;
+                        email.ClassifiedDate = DateTime.UtcNow;
+
+                        await _repository.UpdateAsync(email);
+                    }
+                    catch { }
+                });
 
                 return CreatedAtAction(nameof(GetEmail),
                     new { id = email.Id }, email);
@@ -365,7 +386,38 @@ namespace InsightMail.API.Controllers
 
             return Ok(filtered);
         }
+        [HttpGet("test-gemini")]
+        public async Task<ActionResult> TestGemini(
+    [FromServices] IGeminiClientService gemini)
+        {
+            var response = await gemini.GenerateContentAsync("Say hello!");
+            return Ok(response);
+        }
 
+
+
+        [HttpPost("{id}/classify")]
+        public async Task<ActionResult<Email>> ClassifyEmail(
+    string id,
+    [FromServices] IClassifierService classifier)
+        {
+            var email = await _repository.GetByIdAsync(id);
+
+            if (email == null)
+                return NotFound();
+
+            var result = await classifier.ClassifyEmailAsync(email);
+
+            email.Category = result.Category;
+            email.Priority = result.Priority;
+            email.ClassificationReasoning = result.Reasoning;
+            email.ClassificationConfidence = result.Confidence;
+            email.ClassifiedDate = DateTime.UtcNow;
+
+            await _repository.UpdateAsync(email);
+
+            return Ok(email);
+        }
         /// <summary>
         /// Get email analytics and statistics
         /// </summary>

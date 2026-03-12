@@ -1,0 +1,9 @@
+Generate a professional email reply.
+
+Subject: {{subject}}
+Sender: {{sender}}
+
+Email Body:
+{{body}}
+
+Generate a polite and professional response.

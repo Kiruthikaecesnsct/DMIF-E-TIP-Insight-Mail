@@ -1,0 +1,11 @@
+You are an email classification assistant.
+
+Email Subject: {{subject}}
+Email From: {{sender}}
+Email Body: {{body}}
+
+Classify this email into one of these categories:
+{{categories}}
+
+Return JSON:
+{{output_format}}
