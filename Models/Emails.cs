@@ -42,5 +42,7 @@ namespace InsightMail.API.Models
         public string? ClassificationReasoning { get; set; }
         public double? ClassificationConfidence { get; set; }
         public DateTime? ClassifiedDate { get; set; }
+        public List<string> ActionItemIds { get; set; } = new();
+        public bool HasActionItems => ActionItemIds.Any();
     }
 }

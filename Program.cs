@@ -1,5 +1,6 @@
-using InsightMail.API.Middleware;
+﻿using InsightMail.API.Middleware;
 using InsightMail.API.Services;
+using InsightMail.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,15 +15,25 @@ builder.Services.AddCors(options =>
                   .AllowAnyMethod();
         });
 });
+
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddScoped<IEmailParserService, EmailParserService>();
+
 builder.Services.AddSingleton<MongoDbService>();
+
+builder.Services.AddScoped<IEmailParserService, EmailParserService>();
 builder.Services.AddScoped<IEmailRepository, EmailRepository>();
+
+// ⭐ ADD THIS
+builder.Services.AddScoped<IActionItemRepository, ActionItemRepository>();
+
 builder.Services.AddHttpClient<IGeminiClientService, GeminiClientService>();
+
 builder.Services.AddScoped<IClassifierService, ClassifierService>();
+builder.Services.AddScoped<IActionExtractorService, ActionExtractorService>();
+
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";

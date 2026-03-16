@@ -1,4 +1,4 @@
-//using InsightMail.API.Models;
+﻿//using InsightMail.API.Models;
 //using InsightMail.API.Services;
 //using Microsoft.AspNetCore.Mvc;
 
@@ -180,6 +180,7 @@
 //PART 3:USING EMAIL REPOSITORY
 using InsightMail.API.Models;
 using InsightMail.API.Services;
+using InsightMail.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InsightMail.API.Controllers
@@ -191,15 +192,24 @@ namespace InsightMail.API.Controllers
         private readonly IEmailParserService _parser;
         private readonly IEmailRepository _repository;
         private readonly IClassifierService _classifier;
+        private readonly IActionExtractorService _extractor;
+        private readonly IActionItemRepository _actionItemRepository;
+        private readonly ILogger<EmailsController> _logger;
 
         public EmailsController(
             IEmailParserService parser,
             IEmailRepository repository,
-            IClassifierService classifier)
+            IClassifierService classifier,
+            IActionExtractorService extractor,
+    IActionItemRepository actionItemRepository,
+    ILogger<EmailsController> logger)
         {
             _parser = parser;
             _repository = repository;
             _classifier = classifier;
+            _extractor = extractor;
+            _actionItemRepository = actionItemRepository;
+            _logger = logger;
         }
 
         /// <summary>
@@ -223,11 +233,12 @@ namespace InsightMail.API.Controllers
 
                 await _repository.CreateAsync(email);
 
-                // Run AI classification in background
+                // Run AI tasks in background
                 _ = Task.Run(async () =>
                 {
                     try
                     {
+                        // 1️⃣ AI Classification
                         var result = await _classifier.ClassifyEmailAsync(email);
 
                         email.Category = result.Category;
@@ -237,17 +248,29 @@ namespace InsightMail.API.Controllers
                         email.ClassifiedDate = DateTime.UtcNow;
 
                         await _repository.UpdateAsync(email);
+
+                        // 2️⃣ Extract Action Items
+                        var items = await _extractor.ExtractActionItemsAsync(email);
+
+                        foreach (var item in items)
+                        {
+                            await _actionItemRepository.CreateAsync(item);
+                            email.ActionItemIds.Add(item.Id);
+                        }
+
+                        await _repository.UpdateAsync(email);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Background AI processing failed");
+                    }
                 });
 
-                return CreatedAtAction(nameof(GetEmail),
-                    new { id = email.Id }, email);
+                return CreatedAtAction(nameof(GetEmail), new { id = email.Id }, email);
             }
             catch (Exception ex)
             {
-                return StatusCode(500,
-                    $"Error parsing email: {ex.Message}");
+                return StatusCode(500, $"Error parsing email: {ex.Message}");
             }
         }
 
