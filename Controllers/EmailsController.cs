@@ -180,6 +180,7 @@
 //PART 3:USING EMAIL REPOSITORY
 using InsightMail.API.Models;
 using InsightMail.API.Services;
+using InsightMail.Models;
 using InsightMail.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -194,6 +195,7 @@ namespace InsightMail.API.Controllers
         private readonly IClassifierService _classifier;
         private readonly IActionExtractorService _extractor;
         private readonly IActionItemRepository _actionItemRepository;
+        private readonly IEmbeddingService _embeddingService;
         private readonly ILogger<EmailsController> _logger;
 
         public EmailsController(
@@ -202,6 +204,7 @@ namespace InsightMail.API.Controllers
             IClassifierService classifier,
             IActionExtractorService extractor,
     IActionItemRepository actionItemRepository,
+    IEmbeddingService embeddingService,
     ILogger<EmailsController> logger)
         {
             _parser = parser;
@@ -209,6 +212,7 @@ namespace InsightMail.API.Controllers
             _classifier = classifier;
             _extractor = extractor;
             _actionItemRepository = actionItemRepository;
+            _embeddingService = embeddingService;
             _logger = logger;
         }
 
@@ -238,26 +242,39 @@ namespace InsightMail.API.Controllers
                 {
                     try
                     {
-                        // 1️⃣ AI Classification
-                        var result = await _classifier.ClassifyEmailAsync(email);
+                        // Run ALL in parallel 🔥
+                        var classificationTask = _classifier.ClassifyEmailAsync(email);
+                        var actionTask = _extractor.ExtractActionItemsAsync(email);
+                        var embeddingTask = _embeddingService.GenerateEmbeddingAsync(
+                            $"{email.Subject} {email.Body}");
 
-                        email.Category = result.Category;
-                        email.Priority = result.Priority;
-                        email.ClassificationReasoning = result.Reasoning;
-                        email.ClassificationConfidence = result.Confidence;
+                        await Task.WhenAll(classificationTask, actionTask, embeddingTask);
+
+                        // Assign results
+                        var classification = await classificationTask;
+                        var actionItems = await actionTask;
+                        var embedding = await embeddingTask;
+
+                        Console.WriteLine($"Generated embedding: {embedding.Length}");
+                        // Save embedding
+                        email.Embedding = embedding;
+                        email.EmbeddingGeneratedDate = DateTime.UtcNow;
+
+                        // Save classification
+                        email.Category = classification.Category;
+                        email.Priority = classification.Priority;
+                        email.ClassificationReasoning = classification.Reasoning;
+                        email.ClassificationConfidence = classification.Confidence;
                         email.ClassifiedDate = DateTime.UtcNow;
 
-                        await _repository.UpdateAsync(email);
-
-                        // 2️⃣ Extract Action Items
-                        var items = await _extractor.ExtractActionItemsAsync(email);
-
-                        foreach (var item in items)
+                        // Save action items
+                        foreach (var item in actionItems)
                         {
                             await _actionItemRepository.CreateAsync(item);
                             email.ActionItemIds.Add(item.Id);
                         }
 
+                        // SINGLE DB UPDATE ✅
                         await _repository.UpdateAsync(email);
                     }
                     catch (Exception ex)
@@ -366,13 +383,16 @@ namespace InsightMail.API.Controllers
         /// </summary>
         /// <param name="query">Search text</param>
         [HttpGet("search")]
-        public async Task<ActionResult<List<Email>>> SearchEmails([FromQuery] string query)
+        public async Task<ActionResult<List<Email>>> SearchEmails(
+    [FromQuery] string query,
+    [FromServices] EmailSearchService searchService)
         {
             if (string.IsNullOrWhiteSpace(query))
-                return BadRequest("Search query cannot be empty");
+                return BadRequest("Query cannot be empty");
 
-            var emails = await _repository.SearchAsync(query);
-            return Ok(emails);
+            var results = await searchService.SearchAsync(query);
+
+            return Ok(results);
         }
 
         /// <summary>
@@ -418,7 +438,18 @@ namespace InsightMail.API.Controllers
         }
 
 
+        [HttpGet("ask")]
+        public async Task<ActionResult<RAGAnswer>> AskQuestion(
+    [FromQuery] string question,
+    [FromServices] EmailRAGService ragService)
+        {
+            if (string.IsNullOrWhiteSpace(question))
+                return BadRequest("Question is required");
 
+            var result = await ragService.AskQuestionAsync(question);
+
+            return Ok(result);
+        }
         [HttpPost("{id}/classify")]
         public async Task<ActionResult<Email>> ClassifyEmail(
     string id,

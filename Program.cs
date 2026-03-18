@@ -1,6 +1,7 @@
 ﻿using InsightMail.API.Middleware;
 using InsightMail.API.Services;
 using InsightMail.Services;
+using InsightMail.Services.InsightMail.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,10 +31,11 @@ builder.Services.AddScoped<IEmailRepository, EmailRepository>();
 builder.Services.AddScoped<IActionItemRepository, ActionItemRepository>();
 
 builder.Services.AddHttpClient<IGeminiClientService, GeminiClientService>();
-
+builder.Services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>();
 builder.Services.AddScoped<IClassifierService, ClassifierService>();
 builder.Services.AddScoped<IActionExtractorService, ActionExtractorService>();
-
+builder.Services.AddScoped<EmailSearchService>();
+builder.Services.AddScoped<EmailRAGService>();
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";

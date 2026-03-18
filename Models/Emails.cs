@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using MongoDB.Bson.Serialization.Attributes;
+using System.ComponentModel.DataAnnotations;
 
 namespace InsightMail.API.Models
 {
@@ -44,5 +45,11 @@ namespace InsightMail.API.Models
         public DateTime? ClassifiedDate { get; set; }
         public List<string> ActionItemIds { get; set; } = new();
         public bool HasActionItems => ActionItemIds.Any();
+        public float[]? Embedding { get; set; }
+        public DateTime? EmbeddingGeneratedDate { get; set; }
+        [BsonElement("score")]
+        [BsonIgnoreIfNull]
+        public float? Score { get; set; }
+
     }
 }

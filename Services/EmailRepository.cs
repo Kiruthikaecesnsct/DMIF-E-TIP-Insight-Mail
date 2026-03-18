@@ -1,5 +1,7 @@
-﻿using MongoDB.Driver;
-using InsightMail.API.Models;
+﻿using InsightMail.API.Models;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using InsightMail.Models;
 
 namespace InsightMail.API.Services
 {
@@ -10,7 +12,7 @@ namespace InsightMail.API.Services
         Task<List<Email>> GetAllAsync();
         Task<bool> DeleteAsync(string id);
         Task<List<Email>> SearchAsync(string query);
-
+        Task<List<SearchResult>> VectorSearchAsync(float[] queryEmbedding, int limit = 10);
         Task<bool> UpdateAsync(Email email);
     }
 
@@ -72,6 +74,30 @@ namespace InsightMail.API.Services
 
             return result.ModifiedCount > 0;
         }
-    }
 
-}
+        public async Task<List<SearchResult>> VectorSearchAsync(float[] queryEmbedding, int limit = 10)
+        {
+            var pipeline = new[]
+            {
+        new BsonDocument("$vectorSearch", new BsonDocument
+        {
+            { "index", "email_vector_index" },
+            { "path", "Embedding" },
+            { "queryVector", new BsonArray(queryEmbedding) },
+            { "numCandidates", 100 },
+            { "limit", limit }
+        }),
+        new BsonDocument("$project", new BsonDocument
+        {
+            { "_id", 0 }, // optional
+            { "Email", "$$ROOT" }, // wrap full document
+            { "score", new BsonDocument("$meta", "vectorSearchScore") }
+        })
+    };
+
+            return await _emails
+                .Aggregate<SearchResult>(pipeline)
+                .ToListAsync();
+        }
+    }
+    }
