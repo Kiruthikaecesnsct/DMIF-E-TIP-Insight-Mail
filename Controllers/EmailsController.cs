@@ -266,7 +266,9 @@ namespace InsightMail.API.Controllers
                         email.ClassificationReasoning = classification.Reasoning;
                         email.ClassificationConfidence = classification.Confidence;
                         email.ClassifiedDate = DateTime.UtcNow;
+                        var myEmail = "your-email@gmail.com";
 
+                        email.IsSentByUser = email.Sender.Equals(myEmail, StringComparison.OrdinalIgnoreCase);
                         // Save action items
                         foreach (var item in actionItems)
                         {
@@ -412,6 +414,30 @@ namespace InsightMail.API.Controllers
             return Ok(filtered);
         }
 
+
+        [HttpPost("generate-reply/{id}")]
+        public async Task<IActionResult> GenerateReply(
+    string id,
+    [FromServices] ReplyGenerationService replyService,
+    [FromServices] ReplyValidationService validationService,
+    [FromBody] ReplyOptions? options = null)
+        {
+            var email = await _repository.GetByIdAsync(id);
+            if (email == null) return NotFound();
+
+            var replies = await replyService.GenerateReplyAsync(email, options);
+
+            // Filter out invalid replies but keep at least one
+            var validated = replies.Where(r => validationService.IsValid(r, email)).ToList();
+            if (!validated.Any()) validated = replies; // fallback: show all if all fail validation
+
+            return Ok(new
+            {
+                EmailId = id,
+                GeneratedAt = DateTime.UtcNow,
+                Replies = validated
+            });
+        }
         /// <summary>
         /// Retrieve emails within a date range
         /// </summary>

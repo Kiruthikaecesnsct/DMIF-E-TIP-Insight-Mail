@@ -14,6 +14,9 @@ namespace InsightMail.API.Services
         Task<List<Email>> SearchAsync(string query);
         Task<List<SearchResult>> VectorSearchAsync(float[] queryEmbedding, int limit = 10);
         Task<bool> UpdateAsync(Email email);
+        Task<List<Email>> GetBySenderAsync(string sender);
+        Task<List<Email>> GetSentEmailsAsync();
+
     }
 
     public class EmailRepository : IEmailRepository
@@ -74,7 +77,24 @@ namespace InsightMail.API.Services
 
             return result.ModifiedCount > 0;
         }
+        public async Task<List<Email>> GetBySenderAsync(string sender)
+        {
+            return await _emails.Find(e => e.Sender == sender)
+                .SortByDescending(e => e.ReceivedDate)
+                .Limit(5)
+                .ToListAsync();
+        }
 
+        // ⚠️ You NEED a way to identify sent emails
+        // simplest: assume sender == "me@yourapp.com"
+
+        public async Task<List<Email>> GetSentEmailsAsync()
+        {
+            return await _emails.Find(e => e.IsSentByUser)
+                .SortByDescending(e => e.ReceivedDate)
+                .Limit(5)
+                .ToListAsync();
+        }
         public async Task<List<SearchResult>> VectorSearchAsync(float[] queryEmbedding, int limit = 10)
         {
             var pipeline = new[]

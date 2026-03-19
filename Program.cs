@@ -36,6 +36,10 @@ builder.Services.AddScoped<IClassifierService, ClassifierService>();
 builder.Services.AddScoped<IActionExtractorService, ActionExtractorService>();
 builder.Services.AddScoped<EmailSearchService>();
 builder.Services.AddScoped<EmailRAGService>();
+builder.Services.AddScoped<ReplyContextService>();
+builder.Services.AddScoped<ReplyPromptBuilder>();
+builder.Services.AddScoped<ReplyGenerationService>();
+builder.Services.AddScoped<ReplyValidationService>();
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";

@@ -50,6 +50,7 @@ namespace InsightMail.API.Models
         [BsonElement("score")]
         [BsonIgnoreIfNull]
         public float? Score { get; set; }
+        public bool IsSentByUser { get; set; } = false;
 
     }
 }
