@@ -40,6 +40,7 @@ builder.Services.AddScoped<ReplyContextService>();
 builder.Services.AddScoped<ReplyPromptBuilder>();
 builder.Services.AddScoped<ReplyGenerationService>();
 builder.Services.AddScoped<ReplyValidationService>();
+builder.Services.AddScoped<ReplyAnalyticsService>();
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";

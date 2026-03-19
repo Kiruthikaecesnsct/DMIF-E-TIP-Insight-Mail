@@ -438,6 +438,28 @@ namespace InsightMail.API.Controllers
                 Replies = validated
             });
         }
+
+
+        [HttpPost("reply-analytics")]
+        public async Task<IActionResult> TrackReplyAnalytics(
+    [FromBody] ReplyAnalytics entry,
+    [FromServices] ReplyAnalyticsService analyticsService)
+        {
+            if (entry == null)
+                return BadRequest("Entry cannot be null");
+
+            _logger.LogInformation("Tracking analytics: {Type}", entry.SelectedType);
+            await analyticsService.TrackAsync(entry);
+            return Ok(new { tracked = true });
+        }
+
+        [HttpGet("reply-analytics/summary")]
+        public async Task<IActionResult> GetAnalyticsSummary(
+            [FromServices] ReplyAnalyticsService analyticsService)
+        {
+            var summary = await analyticsService.GetSummaryAsync();
+            return Ok(summary);
+        }
         /// <summary>
         /// Retrieve emails within a date range
         /// </summary>
