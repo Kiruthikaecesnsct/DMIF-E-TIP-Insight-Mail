@@ -41,6 +41,10 @@ builder.Services.AddScoped<ReplyPromptBuilder>();
 builder.Services.AddScoped<ReplyGenerationService>();
 builder.Services.AddScoped<ReplyValidationService>();
 builder.Services.AddScoped<ReplyAnalyticsService>();
+builder.Services.AddScoped<ThreadChunker>();
+builder.Services.AddScoped<ThreadSummarizerAgent>();
+builder.Services.AddScoped<SummaryAnalyticsService>();
+builder.Services.AddScoped<EmailThreadSplitter>();
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
