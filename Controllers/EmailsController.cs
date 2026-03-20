@@ -356,12 +356,12 @@ namespace InsightMail.API.Controllers
         /// Retrieves all emails from the database
         /// </summary>
         /// <returns>List of emails sorted by received date</returns>
-        [HttpGet]
-        public async Task<ActionResult<List<Email>>> GetEmails()
-        {
-            var emails = await _repository.GetAllAsync();
-            return Ok(emails);
-        }
+        //[HttpGet]
+        //public async Task<ActionResult<List<Email>>> GetEmails()
+        //{
+        //    var emails = await _repository.GetAllAsync();
+        //    return Ok(emails);
+        //}
 
         /// <summary>
         /// Retrieves a single email by ID
@@ -557,7 +557,18 @@ namespace InsightMail.API.Controllers
 
             return Ok(summary);
         }
+        [HttpGet]
+        public async Task<IActionResult> GetAll([FromQuery] string? subject = null)
+        {
+            var emails = await _repository.GetAllAsync();
 
+            if (!string.IsNullOrEmpty(subject))
+                emails = emails.Where(e =>
+                    e.Subject.Contains(subject, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            return Ok(emails);
+        }
         [HttpGet("summary-analytics")]
         public async Task<IActionResult> GetSummaryAnalytics(
             [FromServices] SummaryAnalyticsService analyticsService)

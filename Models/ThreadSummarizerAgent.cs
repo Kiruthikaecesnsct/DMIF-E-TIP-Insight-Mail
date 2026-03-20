@@ -139,23 +139,15 @@ Be specific and factual. If a section has no items, write 'None identified'.";
 
         private async Task EnrichSummaryAsync(ThreadSummary summary, List<Email> emails)
         {
-            // Max 2 concurrent Gemini calls to stay within rate limits
-            var semaphore = new SemaphoreSlim(2, 2);
+            // Rate limiter in GeminiClientService handles throttling — no semaphore needed here
+            var decisionsTask = ExtractDecisionsAsync(summary.ExecutiveSummaryText);
+            var questionsTask = ExtractQuestionsAsync(summary.ExecutiveSummaryText);
+            var actionsTask = ExtractActionItemsAsync(summary.ExecutiveSummaryText);
+            var participantsTask = AnalyzeParticipantsAsync(emails);
+            var timelineTask = ExtractTimelineAsync(summary.ExecutiveSummaryText);
 
-            async Task<T> Throttled<T>(Func<Task<T>> taskFactory)
-            {
-                await semaphore.WaitAsync();
-                try { return await taskFactory(); }
-                finally { semaphore.Release(); }
-            }
-
-            var decisionsTask = Throttled(() => ExtractDecisionsAsync(summary.ExecutiveSummaryText));
-            var questionsTask = Throttled(() => ExtractQuestionsAsync(summary.ExecutiveSummaryText));
-            var actionsTask = Throttled(() => ExtractActionItemsAsync(summary.ExecutiveSummaryText));
-            var participantsTask = Throttled(() => AnalyzeParticipantsAsync(emails));
-            var timelineTask = Throttled(() => ExtractTimelineAsync(summary.ExecutiveSummaryText));
-
-            await Task.WhenAll(decisionsTask, questionsTask, actionsTask, participantsTask, timelineTask);
+            await Task.WhenAll(decisionsTask, questionsTask, actionsTask,
+                               participantsTask, timelineTask);
 
             summary.KeyDecisions = decisionsTask.Result;
             summary.OpenQuestions = questionsTask.Result;
@@ -163,7 +155,6 @@ Be specific and factual. If a section has no items, write 'None identified'.";
             summary.Participants = participantsTask.Result;
             summary.Timeline = timelineTask.Result;
         }
-
         private async Task<List<Decision>> ExtractDecisionsAsync(string text)
         {
             var prompt = $@"

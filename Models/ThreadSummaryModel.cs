@@ -7,8 +7,10 @@ namespace InsightMail.Models
     public class ThreadSummary
     {
         [BsonId]
-        [BsonRepresentation(BsonType.ObjectId)]
-        public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
+        [BsonRepresentation(BsonType.String)]
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        public string ThreadId { get; set; } = "";
         public string ExecutiveSummaryText { get; set; } = "";
         public List<Decision> KeyDecisions { get; set; } = new();
         public List<OpenQuestion> OpenQuestions { get; set; } = new();

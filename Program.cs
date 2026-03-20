@@ -1,5 +1,6 @@
 ﻿using InsightMail.API.Middleware;
 using InsightMail.API.Services;
+using InsightMail.Repositories;
 using InsightMail.Services;
 using InsightMail.Services.InsightMail.Services;
 
@@ -45,6 +46,7 @@ builder.Services.AddScoped<ThreadChunker>();
 builder.Services.AddScoped<ThreadSummarizerAgent>();
 builder.Services.AddScoped<SummaryAnalyticsService>();
 builder.Services.AddScoped<EmailThreadSplitter>();
+builder.Services.AddScoped<IThreadSummaryRepository, ThreadSummaryRepository>();  
 builder.Services.AddSwaggerGen(options =>
 {
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
