@@ -1,9 +1,11 @@
-﻿using InsightMail.API.Models;
+﻿using InsightMail.API.Hubs;
+using InsightMail.API.Models;
 using InsightMail.API.Services;
 using InsightMail.Models;
 using InsightMail.Repositories;
 using InsightMail.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace InsightMail.API.Controllers
 {
@@ -15,6 +17,7 @@ namespace InsightMail.API.Controllers
         private readonly IEmailRepository _emailRepo;
         private readonly ThreadSummarizerAgent _summarizer;
         private readonly ILogger<ThreadSummariesController> _logger;
+        private readonly IHubContext<EmailHub> _hubContext;
 
         public ThreadSummariesController(
             IThreadSummaryRepository repo,
@@ -64,10 +67,29 @@ namespace InsightMail.API.Controllers
                     }
 
                     if (!emails.Any()) return;
+                    await _hubContext.Clients.All.SendAsync("ReceiveAgentUpdate", new
+                    {
+                        AgentName = "ThreadSummarizer",
+                        Status = "Processing",
+                        Message = $"Background summarization started: {request.ThreadId}",
+                        Timestamp = DateTime.UtcNow
+                    });
 
                     var summary = await _summarizer.SummarizeThreadAsync(emails);
                     summary.ThreadId = request.ThreadId ?? emails.First().Subject;
                     await _repo.CreateAsync(summary);
+
+                    await _hubContext.Clients.All.SendAsync("ReceiveAgentUpdate", new
+                    {
+                        AgentName = "ThreadSummarizer",
+                        Status = "Complete",
+                        Message = $"Summary saved for: {request.ThreadId}",
+                        Timestamp = DateTime.UtcNow
+                    });
+
+                    await _hubContext.Clients.All.SendAsync("ReceiveNotification",
+                        $"Thread summary ready: {request.ThreadId}");
+                    
                 }
                 catch (Exception ex)
                 {

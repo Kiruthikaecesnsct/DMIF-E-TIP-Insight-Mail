@@ -178,11 +178,13 @@
 
 
 //PART 3:USING EMAIL REPOSITORY
+using InsightMail.API.Hubs;
 using InsightMail.API.Models;
 using InsightMail.API.Services;
 using InsightMail.Models;
 using InsightMail.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace InsightMail.API.Controllers
 {
@@ -196,6 +198,7 @@ namespace InsightMail.API.Controllers
         private readonly IActionExtractorService _extractor;
         private readonly IActionItemRepository _actionItemRepository;
         private readonly IEmbeddingService _embeddingService;
+        private readonly IHubContext<EmailHub> _hubContext;
         private readonly ILogger<EmailsController> _logger;
 
         public EmailsController(
@@ -203,9 +206,10 @@ namespace InsightMail.API.Controllers
             IEmailRepository repository,
             IClassifierService classifier,
             IActionExtractorService extractor,
-    IActionItemRepository actionItemRepository,
-    IEmbeddingService embeddingService,
-    ILogger<EmailsController> logger)
+            IActionItemRepository actionItemRepository,
+            IEmbeddingService embeddingService,
+            IHubContext<EmailHub> hubContext,
+            ILogger<EmailsController> logger)
         {
             _parser = parser;
             _repository = repository;
@@ -213,18 +217,16 @@ namespace InsightMail.API.Controllers
             _extractor = extractor;
             _actionItemRepository = actionItemRepository;
             _embeddingService = embeddingService;
+            _hubContext = hubContext;
             _logger = logger;
         }
 
-        /// <summary>
-        /// Uploads and parses a single .eml email file
-        /// </summary>
-        /// <param name="file">The .eml file to upload</param>
-        /// <returns>The parsed email object</returns>
+        // ── Upload ────────────────────────────────────────────────────────
+
         [HttpPost("upload")]
         public async Task<ActionResult<Email>> UploadEmail(
-      IFormFile file,
-      [FromServices] EmailThreadSplitter threadSplitter)
+            IFormFile file,
+            [FromServices] EmailThreadSplitter threadSplitter)
         {
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded");
@@ -237,25 +239,32 @@ namespace InsightMail.API.Controllers
                 using var stream = file.OpenReadStream();
                 var email = await _parser.ParseEmailAsync(stream);
 
-                // Split thread into individual emails
                 var emails = threadSplitter.SplitThread(email);
+                _logger.LogInformation("Email split into {Count} messages", emails.Count);
 
-                _logger.LogInformation(
-                    "Email split into {Count} messages", emails.Count);
-
-                // Save all emails
                 foreach (var e in emails)
                     await _repository.CreateAsync(e);
 
-                // Run AI on the TOP email only (most recent)
                 var topEmail = emails.Last();
 
+                // Fire background AI processing with SignalR updates
                 _ = Task.Run(async () =>
                 {
                     try
                     {
+                        await Notify("Classifier", "Processing",
+                            $"Classifying: {topEmail.Subject}");
+
                         var classificationTask = _classifier.ClassifyEmailAsync(topEmail);
+
+                        await Notify("ActionExtractor", "Processing",
+                            "Extracting action items...");
+
                         var actionTask = _extractor.ExtractActionItemsAsync(topEmail);
+
+                        await Notify("EmbeddingService", "Processing",
+                            "Generating semantic embedding...");
+
                         var embeddingTask = _embeddingService.GenerateEmbeddingAsync(
                             $"{topEmail.Subject} {topEmail.Body}");
 
@@ -284,10 +293,22 @@ namespace InsightMail.API.Controllers
                         }
 
                         await _repository.UpdateAsync(topEmail);
+
+                        await Notify("Classifier", "Complete",
+                            $"Classified as {classification.Category} · Priority {classification.Priority}");
+                        await Notify("ActionExtractor", "Complete",
+                            $"Found {actionItems.Count} action items");
+                        await Notify("EmbeddingService", "Complete",
+                            "Embedding generated");
+
+                        await _hubContext.Clients.All.SendAsync("ReceiveNotification",
+                            $"Email ready: {topEmail.Subject}");
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Background AI processing failed");
+                        await Notify("System", "Failed",
+                            $"Processing failed: {ex.Message}");
                     }
                 });
 
@@ -307,11 +328,6 @@ namespace InsightMail.API.Controllers
             }
         }
 
-        /// <summary>
-        /// Upload multiple email files at once
-        /// </summary>
-        /// <param name="files">List of .eml files</param>
-        /// <returns>Upload summary with success and errors</returns>
         [HttpPost("upload/batch")]
         public async Task<ActionResult> UploadMultipleEmails(List<IFormFile> files)
         {
@@ -333,7 +349,6 @@ namespace InsightMail.API.Controllers
                 {
                     using var stream = file.OpenReadStream();
                     var email = await _parser.ParseEmailAsync(stream);
-
                     await _repository.CreateAsync(email);
                     uploadedEmails.Add(email);
                 }
@@ -352,211 +367,8 @@ namespace InsightMail.API.Controllers
             });
         }
 
-        /// <summary>
-        /// Retrieves all emails from the database
-        /// </summary>
-        /// <returns>List of emails sorted by received date</returns>
-        //[HttpGet]
-        //public async Task<ActionResult<List<Email>>> GetEmails()
-        //{
-        //    var emails = await _repository.GetAllAsync();
-        //    return Ok(emails);
-        //}
+        // ── Read ──────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Retrieves a single email by ID
-        /// </summary>
-        /// <param name="id">Email ID</param>
-        /// <returns>Email object</returns>
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Email>> GetEmail(string id)
-        {
-            var email = await _repository.GetByIdAsync(id);
-
-            if (email == null)
-                return NotFound();
-
-            return Ok(email);
-        }
-
-        /// <summary>
-        /// Deletes an email by ID
-        /// </summary>
-        /// <param name="id">Email ID</param>
-        [HttpDelete("{id}")]
-        public async Task<ActionResult> DeleteEmail(string id)
-        {
-            var deleted = await _repository.DeleteAsync(id);
-
-            if (!deleted)
-                return NotFound();
-
-            return NoContent();
-        }
-
-        /// <summary>
-        /// Search emails by keyword
-        /// </summary>
-        /// <param name="query">Search text</param>
-        [HttpGet("search")]
-        public async Task<ActionResult<List<Email>>> SearchEmails(
-    [FromQuery] string query,
-    [FromServices] EmailSearchService searchService)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-                return BadRequest("Query cannot be empty");
-
-            var results = await searchService.SearchAsync(query);
-
-            return Ok(results);
-        }
-
-        /// <summary>
-        /// Get emails sent by a specific sender
-        /// </summary>
-        /// <param name="sender">Sender email address</param>
-        [HttpGet("sender/{sender}")]
-        public async Task<ActionResult<List<Email>>> GetEmailsBySender(string sender)
-        {
-            var emails = await _repository.GetAllAsync();
-
-            var filtered = emails
-                .Where(e => e.Sender.Contains(sender,
-                StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            return Ok(filtered);
-        }
-
-
-        [HttpPost("generate-reply/{id}")]
-        public async Task<IActionResult> GenerateReply(
-    string id,
-    [FromServices] ReplyGenerationService replyService,
-    [FromServices] ReplyValidationService validationService,
-    [FromBody] ReplyOptions? options = null)
-        {
-            var email = await _repository.GetByIdAsync(id);
-            if (email == null) return NotFound();
-
-            var replies = await replyService.GenerateReplyAsync(email, options);
-
-            // Filter out invalid replies but keep at least one
-            var validated = replies.Where(r => validationService.IsValid(r, email)).ToList();
-            if (!validated.Any()) validated = replies; // fallback: show all if all fail validation
-
-            return Ok(new
-            {
-                EmailId = id,
-                GeneratedAt = DateTime.UtcNow,
-                Replies = validated
-            });
-        }
-
-
-        [HttpPost("reply-analytics")]
-        public async Task<IActionResult> TrackReplyAnalytics(
-    [FromBody] ReplyAnalytics entry,
-    [FromServices] ReplyAnalyticsService analyticsService)
-        {
-            if (entry == null)
-                return BadRequest("Entry cannot be null");
-
-            _logger.LogInformation("Tracking analytics: {Type}", entry.SelectedType);
-            await analyticsService.TrackAsync(entry);
-            return Ok(new { tracked = true });
-        }
-
-        [HttpGet("reply-analytics/summary")]
-        public async Task<IActionResult> GetAnalyticsSummary(
-            [FromServices] ReplyAnalyticsService analyticsService)
-        {
-            var summary = await analyticsService.GetSummaryAsync();
-            return Ok(summary);
-        }
-
-
-        [HttpPost("summarize-thread")]
-        public async Task<IActionResult> SummarizeThread(
-    [FromBody] List<string> emailIds,
-    [FromServices] ThreadSummarizerAgent summarizer,
-    [FromServices] SummaryAnalyticsService analyticsService)
-        {
-            if (emailIds == null || !emailIds.Any())
-                return BadRequest("Email IDs required");
-
-            var emails = new List<Email>();
-            foreach (var id in emailIds)
-            {
-                var email = await _repository.GetByIdAsync(id);
-                if (email != null) emails.Add(email);
-            }
-
-            if (!emails.Any()) return NotFound("No emails found");
-
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var summary = await summarizer.SummarizeThreadAsync(emails);
-            stopwatch.Stop();
-
-            // Track analytics
-            await analyticsService.TrackAsync(new SummaryUsageEvent
-            {
-                SummaryId = summary.Id,
-                EmailCount = summary.OriginalEmailCount,
-                ProcessingTimeSeconds = (int)stopwatch.Elapsed.TotalSeconds,
-                DecisionCount = summary.KeyDecisions.Count,
-                QuestionCount = summary.OpenQuestions.Count,
-                ActionItemCount = summary.ActionItems.Count,
-                ConfidenceScore = summary.ConfidenceScore
-            });
-
-            return Ok(summary);
-        }
-
-        [HttpPost("summarize-by-subject")]
-        public async Task<IActionResult> SummarizeBySubject(
-            [FromQuery] string subject,
-            [FromServices] ThreadSummarizerAgent summarizer,
-            [FromServices] SummaryAnalyticsService analyticsService)
-        {
-            if (string.IsNullOrWhiteSpace(subject))
-                return BadRequest("Subject required");
-
-            var allEmails = await _repository.GetAllAsync();
-
-            // Find emails with same base subject (strip Re:/Fwd:)
-            var baseSubject = subject
-                .Replace("Re:", "", StringComparison.OrdinalIgnoreCase)
-                .Replace("Fwd:", "", StringComparison.OrdinalIgnoreCase)
-                .Trim();
-
-            var thread = allEmails
-                .Where(e => e.Subject != null &&
-                            e.Subject.Contains(baseSubject,
-                                StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (!thread.Any()) return NotFound("No emails found for this subject");
-            if (thread.Count < 2)
-                return BadRequest("Need at least 2 emails to summarize a thread");
-
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var summary = await summarizer.SummarizeThreadAsync(thread);
-            stopwatch.Stop();
-
-            await analyticsService.TrackAsync(new SummaryUsageEvent
-            {
-                SummaryId = summary.Id,
-                EmailCount = summary.OriginalEmailCount,
-                ProcessingTimeSeconds = (int)stopwatch.Elapsed.TotalSeconds,
-                DecisionCount = summary.KeyDecisions.Count,
-                QuestionCount = summary.OpenQuestions.Count,
-                ActionItemCount = summary.ActionItems.Count,
-                ConfidenceScore = summary.ConfidenceScore
-            });
-
-            return Ok(summary);
-        }
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] string? subject = null)
         {
@@ -569,81 +381,40 @@ namespace InsightMail.API.Controllers
 
             return Ok(emails);
         }
-        [HttpGet("summary-analytics")]
-        public async Task<IActionResult> GetSummaryAnalytics(
-            [FromServices] SummaryAnalyticsService analyticsService)
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Email>> GetEmail(string id)
         {
-            var analytics = await analyticsService.GetSummaryAsync();
-            return Ok(analytics);
+            var email = await _repository.GetByIdAsync(id);
+            return email == null ? NotFound() : Ok(email);
         }
-        /// <summary>
-        /// Retrieve emails within a date range
-        /// </summary>
+
+        [HttpGet("sender/{sender}")]
+        public async Task<ActionResult<List<Email>>> GetEmailsBySender(string sender)
+        {
+            var emails = await _repository.GetAllAsync();
+            var filtered = emails
+                .Where(e => e.Sender.Contains(sender, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return Ok(filtered);
+        }
+
         [HttpGet("date-range")]
         public async Task<ActionResult<List<Email>>> GetEmailsByDateRange(
             [FromQuery] DateTime start,
             [FromQuery] DateTime end)
         {
             var emails = await _repository.GetAllAsync();
-
             var filtered = emails
-                .Where(e => e.ReceivedDate >= start &&
-                            e.ReceivedDate <= end)
+                .Where(e => e.ReceivedDate >= start && e.ReceivedDate <= end)
                 .ToList();
-
             return Ok(filtered);
         }
-        [HttpGet("test-gemini")]
-        public async Task<ActionResult> TestGemini(
-    [FromServices] IGeminiClientService gemini)
-        {
-            var response = await gemini.GenerateContentAsync("Say hello!");
-            return Ok(response);
-        }
 
-
-        [HttpGet("ask")]
-        public async Task<ActionResult<RAGAnswer>> AskQuestion(
-    [FromQuery] string question,
-    [FromServices] EmailRAGService ragService)
-        {
-            if (string.IsNullOrWhiteSpace(question))
-                return BadRequest("Question is required");
-
-            var result = await ragService.AskQuestionAsync(question);
-
-            return Ok(result);
-        }
-        [HttpPost("{id}/classify")]
-        public async Task<ActionResult<Email>> ClassifyEmail(
-    string id,
-    [FromServices] IClassifierService classifier)
-        {
-            var email = await _repository.GetByIdAsync(id);
-
-            if (email == null)
-                return NotFound();
-
-            var result = await classifier.ClassifyEmailAsync(email);
-
-            email.Category = result.Category;
-            email.Priority = result.Priority;
-            email.ClassificationReasoning = result.Reasoning;
-            email.ClassificationConfidence = result.Confidence;
-            email.ClassifiedDate = DateTime.UtcNow;
-
-            await _repository.UpdateAsync(email);
-
-            return Ok(email);
-        }
-        /// <summary>
-        /// Get email analytics and statistics
-        /// </summary>
         [HttpGet("stats")]
         public async Task<ActionResult> GetEmailStats()
         {
             var emails = await _repository.GetAllAsync();
-
             var stats = new
             {
                 TotalEmails = emails.Count,
@@ -662,8 +433,258 @@ namespace InsightMail.API.Controllers
                     .ThenByDescending(x => x.Month)
                     .ToList()
             };
-
             return Ok(stats);
+        }
+
+        // ── Delete ────────────────────────────────────────────────────────
+
+        [HttpDelete("{id}")]
+        public async Task<ActionResult> DeleteEmail(string id)
+        {
+            var deleted = await _repository.DeleteAsync(id);
+            return deleted ? NoContent() : NotFound();
+        }
+
+        // ── Search / RAG ──────────────────────────────────────────────────
+
+        [HttpGet("search")]
+        public async Task<ActionResult<List<Email>>> SearchEmails(
+            [FromQuery] string query,
+            [FromServices] EmailSearchService searchService)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return BadRequest("Query cannot be empty");
+            var results = await searchService.SearchAsync(query);
+            return Ok(results);
+        }
+
+        [HttpGet("ask")]
+        public async Task<ActionResult<RAGAnswer>> AskQuestion(
+            [FromQuery] string question,
+            [FromServices] EmailRAGService ragService)
+        {
+            if (string.IsNullOrWhiteSpace(question))
+                return BadRequest("Question is required");
+            var result = await ragService.AskQuestionAsync(question);
+            return Ok(result);
+        }
+
+        // ── Classification ────────────────────────────────────────────────
+
+        [HttpPost("{id}/classify")]
+        public async Task<ActionResult<Email>> ClassifyEmail(
+            string id,
+            [FromServices] IClassifierService classifier)
+        {
+            var email = await _repository.GetByIdAsync(id);
+            if (email == null) return NotFound();
+
+            var result = await classifier.ClassifyEmailAsync(email);
+
+            email.Category = result.Category;
+            email.Priority = result.Priority;
+            email.ClassificationReasoning = result.Reasoning;
+            email.ClassificationConfidence = result.Confidence;
+            email.ClassifiedDate = DateTime.UtcNow;
+
+            await _repository.UpdateAsync(email);
+            return Ok(email);
+        }
+
+        // ── Reply generation ──────────────────────────────────────────────
+
+        [HttpPost("generate-reply/{id}")]
+        public async Task<IActionResult> GenerateReply(
+            string id,
+            [FromServices] ReplyGenerationService replyService,
+            [FromServices] ReplyValidationService validationService,
+            [FromBody] ReplyOptions? options = null)
+        {
+            var email = await _repository.GetByIdAsync(id);
+            if (email == null) return NotFound();
+
+            var replies = await replyService.GenerateReplyAsync(email, options);
+            var validated = replies.Where(r => validationService.IsValid(r, email)).ToList();
+            if (!validated.Any()) validated = replies;
+
+            return Ok(new
+            {
+                EmailId = id,
+                GeneratedAt = DateTime.UtcNow,
+                Replies = validated
+            });
+        }
+
+        [HttpPost("reply-analytics")]
+        public async Task<IActionResult> TrackReplyAnalytics(
+            [FromBody] ReplyAnalytics entry,
+            [FromServices] ReplyAnalyticsService analyticsService)
+        {
+            if (entry == null) return BadRequest("Entry cannot be null");
+            _logger.LogInformation("Tracking analytics: {Type}", entry.SelectedType);
+            await analyticsService.TrackAsync(entry);
+            return Ok(new { tracked = true });
+        }
+
+        [HttpGet("reply-analytics/summary")]
+        public async Task<IActionResult> GetAnalyticsSummary(
+            [FromServices] ReplyAnalyticsService analyticsService)
+        {
+            var summary = await analyticsService.GetSummaryAsync();
+            return Ok(summary);
+        }
+
+        // ── Thread summarization ──────────────────────────────────────────
+
+        [HttpPost("summarize-thread")]
+        public async Task<IActionResult> SummarizeThread(
+            [FromBody] List<string> emailIds,
+            [FromServices] ThreadSummarizerAgent summarizer,
+            [FromServices] SummaryAnalyticsService analyticsService)
+        {
+            if (emailIds == null || !emailIds.Any())
+                return BadRequest("Email IDs required");
+
+            var emails = new List<Email>();
+            foreach (var id in emailIds)
+            {
+                var email = await _repository.GetByIdAsync(id);
+                if (email != null) emails.Add(email);
+            }
+
+            if (!emails.Any()) return NotFound("No emails found");
+
+            await Notify("ThreadSummarizer", "Processing",
+                $"Summarizing {emails.Count} emails...");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var summary = await summarizer.SummarizeThreadAsync(emails);
+            sw.Stop();
+
+            await analyticsService.TrackAsync(new SummaryUsageEvent
+            {
+                SummaryId = summary.Id,
+                EmailCount = summary.OriginalEmailCount,
+                ProcessingTimeSeconds = (int)sw.Elapsed.TotalSeconds,
+                DecisionCount = summary.KeyDecisions.Count,
+                QuestionCount = summary.OpenQuestions.Count,
+                ActionItemCount = summary.ActionItems.Count,
+                ConfidenceScore = summary.ConfidenceScore
+            });
+
+            await Notify("ThreadSummarizer", "Complete",
+                $"Summary done — {summary.KeyDecisions.Count} decisions, " +
+                $"{summary.ActionItems.Count} action items");
+
+            return Ok(summary);
+        }
+
+        [HttpPost("summarize-by-subject")]
+        public async Task<IActionResult> SummarizeBySubject(
+            [FromQuery] string subject,
+            [FromServices] ThreadSummarizerAgent summarizer,
+            [FromServices] SummaryAnalyticsService analyticsService)
+        {
+            if (string.IsNullOrWhiteSpace(subject))
+                return BadRequest("Subject required");
+
+            var allEmails = await _repository.GetAllAsync();
+            var baseSubject = subject
+                .Replace("Re:", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("Fwd:", "", StringComparison.OrdinalIgnoreCase)
+                .Trim();
+
+            var thread = allEmails
+                .Where(e => e.Subject != null &&
+                            e.Subject.Contains(baseSubject,
+                                StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (!thread.Any()) return NotFound("No emails found for this subject");
+            if (thread.Count < 2)
+                return BadRequest("Need at least 2 emails to summarize a thread");
+
+            await Notify("ThreadSummarizer", "Processing",
+                $"Summarizing thread: {baseSubject}");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var summary = await summarizer.SummarizeThreadAsync(thread);
+            sw.Stop();
+
+            await analyticsService.TrackAsync(new SummaryUsageEvent
+            {
+                SummaryId = summary.Id,
+                EmailCount = summary.OriginalEmailCount,
+                ProcessingTimeSeconds = (int)sw.Elapsed.TotalSeconds,
+                DecisionCount = summary.KeyDecisions.Count,
+                QuestionCount = summary.OpenQuestions.Count,
+                ActionItemCount = summary.ActionItems.Count,
+                ConfidenceScore = summary.ConfidenceScore
+            });
+
+            await Notify("ThreadSummarizer", "Complete",
+                $"Summary done — confidence {summary.ConfidenceScore}%");
+
+            return Ok(summary);
+        }
+
+        [HttpGet("summary-analytics")]
+        public async Task<IActionResult> GetSummaryAnalytics(
+            [FromServices] SummaryAnalyticsService analyticsService)
+        {
+            var analytics = await analyticsService.GetSummaryAsync();
+            return Ok(analytics);
+        }
+
+        // ── Draft assistant ───────────────────────────────────────────────
+
+        [HttpPost("compose")]
+        public async Task<IActionResult> ComposeDraft(
+            [FromBody] ComposeRequest request,
+            [FromServices] IDraftAssistantAgent draftAgent)
+        {
+            if (string.IsNullOrWhiteSpace(request.Purpose))
+                return BadRequest("Purpose is required.");
+
+            await Notify("DraftAssistant", "Processing",
+                $"Composing: {request.Purpose}");
+
+            var draft = await draftAgent.ComposeEmailAsync(request);
+
+            await Notify("DraftAssistant", "Complete",
+                $"Draft ready — confidence {draft.ConfidenceScore * 100:F0}%");
+
+            return Ok(draft);
+        }
+
+        // ── Debug ─────────────────────────────────────────────────────────
+
+        [HttpGet("test-gemini")]
+        public async Task<ActionResult> TestGemini(
+            [FromServices] IGeminiClientService gemini)
+        {
+            var response = await gemini.GenerateContentAsync("Say hello!");
+            return Ok(response);
+        }
+
+        // ── Private helpers ───────────────────────────────────────────────
+
+        private async Task Notify(string agentName, string status, string message)
+        {
+            try
+            {
+                await _hubContext.Clients.All.SendAsync("ReceiveAgentUpdate", new
+                {
+                    AgentName = agentName,
+                    Status = status,
+                    Message = message,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("SignalR notify failed: {Msg}", ex.Message);
+            }
         }
     }
 }
