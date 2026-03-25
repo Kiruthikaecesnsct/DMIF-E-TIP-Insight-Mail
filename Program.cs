@@ -62,6 +62,8 @@ builder.Services.AddSwaggerGen(options =>
     options.IncludeXmlComments(xmlPath);
 });
 var app = builder.Build();
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+app.Urls.Add($"http://*:{port}");
 app.UseCors("AllowAll");                                          // ← must be first
 app.MapHub<InsightMail.API.Hubs.EmailHub>("/emailhub");          // ← after CORS
 app.UseMiddleware<ExceptionHandlingMiddleware>();
