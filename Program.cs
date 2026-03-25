@@ -15,7 +15,8 @@ builder.Services.AddCors(options =>
         {
             policy.WithOrigins(
                       "https://localhost:7097",  // your Blazor UI https port
-                      "http://localhost:5097"    // your Blazor UI http port
+                      "http://localhost:5097",
+                      "https://dmif-e-tip-insight-mail-7vwkbgpzl-kiruthikaecesnscts-projects.vercel.app/"// your Blazor UI http port
                   )
                   .AllowAnyHeader()
                   .AllowAnyMethod()
