@@ -68,15 +68,12 @@ app.UseCors("AllowAll");                                          // ← must be
 app.MapHub<InsightMail.API.Hubs.EmailHub>("/emailhub");          // ← after CORS
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-app.UseHttpsRedirection();
+app.UseSwagger();
+app.UseSwaggerUI();
+//app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
 app.MapControllers();
-
+app.MapGet("/", () => "🚀 InsightMail API is LIVE on Render!");
 app.Run();
